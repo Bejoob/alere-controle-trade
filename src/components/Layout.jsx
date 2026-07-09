@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Menu } from 'lucide-react';
 import Sidebar from './Sidebar.jsx';
-import BackupBanner from './BackupBanner.jsx';
 
 export default function Layout({ children }) {
   const [open, setOpen] = useState(false);
@@ -17,7 +16,6 @@ export default function Layout({ children }) {
           <span className="font-semibold text-slate-800">Alere · Controle de Trade</span>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 md:px-8">
-          <BackupBanner />
           {children}
         </main>
       </div>

@@ -1,20 +1,33 @@
 import { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Truck, Package, CalendarClock, Plus, Pencil, Trash2, Check, X, FileSpreadsheet, FileDown } from 'lucide-react';
-import db from '../db.js';
+import { supabase, TABLES } from '../db.js';
+import { useSupabaseTable } from '../lib/useSupabaseTable.js';
 import StatCard from '../components/StatCard.jsx';
 import BarLojas from '../components/charts/BarLojas.jsx';
 import PieProdutos from '../components/charts/PieProdutos.jsx';
 import LineEvolucao from '../components/charts/LineEvolucao.jsx';
-import { totalEnviado, totalPorProdutoCD, totalPorLojaDestinoCD, serieEnvioPorData, ultimaVisitaCD } from '../lib/cd.js';
+import { totalEnviado, totalPorProdutoCD, totalPorLojaDestinoCD, serieEnvioPorData, ultimaVisitaCD, compararUltimasVisitasCD } from '../lib/cd.js';
 import { formatDateBR, diaDaSemana, todayISO } from '../lib/format.js';
 import { exportarCSV } from '../lib/csv.js';
 import { gerarPDFRelatorio } from '../lib/pdf.js';
 
 const FORM_VAZIO = { dataVisita: todayISO(), produto: '', quantidadeEnviada: '', lojaDestino: '', responsavel: '', observacoes: '' };
 
+const TENDENCIA_LABEL = {
+  queda: 'Redução no envio',
+  aumento: 'Aumento no envio',
+  estavel: 'Estável',
+  'sem-comparativo': 'Primeira visita',
+};
+const TENDENCIA_BADGE = {
+  queda: 'badge-green',
+  aumento: 'badge-blue',
+  estavel: 'badge-gray',
+  'sem-comparativo': 'badge-gray',
+};
+
 export default function CentroDistribuicao() {
-  const registros = useLiveQuery(() => db.centroDistribuicao.toArray(), []) ?? [];
+  const registros = useSupabaseTable(TABLES.CD);
   const [form, setForm] = useState(FORM_VAZIO);
   const [erro, setErro] = useState('');
   const [edicao, setEdicao] = useState(null);
@@ -23,6 +36,7 @@ export default function CentroDistribuicao() {
   const porLoja = useMemo(() => totalPorLojaDestinoCD(registros), [registros]);
   const serie = useMemo(() => serieEnvioPorData(registros), [registros]);
   const ultima = useMemo(() => ultimaVisitaCD(registros), [registros]);
+  const evolucao = useMemo(() => compararUltimasVisitasCD(registros), [registros]);
   const historico = useMemo(() => [...registros].sort((a, b) => (a.dataVisita < b.dataVisita ? 1 : -1)), [registros]);
 
   async function handleRegistrar(e) {
@@ -32,7 +46,7 @@ export default function CentroDistribuicao() {
     if (!form.lojaDestino.trim()) return setErro('Informe a loja destino.');
     if (!form.dataVisita) return setErro('Selecione a data da visita.');
 
-    await db.centroDistribuicao.add({
+    const { error } = await supabase.from(TABLES.CD).insert({
       origem: 'CD',
       produto: form.produto.trim(),
       quantidadeEnviada: Number(form.quantidadeEnviada) || 0,
@@ -43,6 +57,7 @@ export default function CentroDistribuicao() {
       observacoes: form.observacoes.trim(),
       criadoEm: new Date().toISOString(),
     });
+    if (error) return setErro(`Erro ao salvar no Supabase: ${error.message}`);
     setForm(FORM_VAZIO);
   }
 
@@ -53,20 +68,27 @@ export default function CentroDistribuicao() {
     setEdicao(null);
   }
   async function salvarEdicao() {
-    await db.centroDistribuicao.update(edicao.id, {
-      produto: edicao.produto,
-      quantidadeEnviada: Number(edicao.quantidadeEnviada) || 0,
-      lojaDestino: edicao.lojaDestino,
-      responsavel: edicao.responsavel,
-      dataVisita: edicao.dataVisita,
-      diaSemana: diaDaSemana(edicao.dataVisita),
-      observacoes: edicao.observacoes,
-    });
+    setErro('');
+    const { error } = await supabase
+      .from(TABLES.CD)
+      .update({
+        produto: edicao.produto,
+        quantidadeEnviada: Number(edicao.quantidadeEnviada) || 0,
+        lojaDestino: edicao.lojaDestino,
+        responsavel: edicao.responsavel,
+        dataVisita: edicao.dataVisita,
+        diaSemana: diaDaSemana(edicao.dataVisita),
+        observacoes: edicao.observacoes,
+      })
+      .eq('id', edicao.id);
+    if (error) return setErro(`Erro ao salvar: ${error.message}`);
     setEdicao(null);
   }
   async function excluir(id) {
     if (!window.confirm('Excluir este envio do CD?')) return;
-    await db.centroDistribuicao.delete(id);
+    setErro('');
+    const { error } = await supabase.from(TABLES.CD).delete().eq('id', id);
+    if (error) setErro(`Erro ao excluir: ${error.message}`);
   }
 
   function handleExportarCSV() {
@@ -187,6 +209,45 @@ export default function CentroDistribuicao() {
       <div className="card">
         <h2 className="mb-2 text-sm font-semibold text-slate-700">Envio por data</h2>
         <LineEvolucao data={serie} />
+      </div>
+
+      <div className="card overflow-x-auto">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700">Comparativo entre visitas (queda/aumento de estoque)</h2>
+        <table className="w-full min-w-[640px] text-left text-sm">
+          <thead>
+            <tr className="border-b border-slate-100 text-xs text-slate-400">
+              <th className="py-2 pr-3">Loja destino</th>
+              <th className="py-2 pr-3">Produto</th>
+              <th className="py-2 pr-3">Visita anterior</th>
+              <th className="py-2 pr-3">Qtd. anterior</th>
+              <th className="py-2 pr-3">Visita atual</th>
+              <th className="py-2 pr-3">Qtd. atual</th>
+              <th className="py-2 pr-3">Tendência</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evolucao.length === 0 && (
+              <tr>
+                <td colSpan={7} className="py-6 text-center text-slate-400">
+                  Sem dados suficientes ainda.
+                </td>
+              </tr>
+            )}
+            {evolucao.map((e) => (
+              <tr key={`${e.loja}-${e.produto}`} className="border-b border-slate-50">
+                <td className="py-2 pr-3">Loja {e.loja}</td>
+                <td className="py-2 pr-3">{e.produto}</td>
+                <td className="py-2 pr-3">{e.dataVisitaAnterior ? formatDateBR(e.dataVisitaAnterior) : '-'}</td>
+                <td className="py-2 pr-3">{e.quantidadeAnterior ?? '-'}</td>
+                <td className="py-2 pr-3">{formatDateBR(e.dataVisitaAtual)}</td>
+                <td className="py-2 pr-3">{e.quantidadeAtual}</td>
+                <td className="py-2 pr-3">
+                  <span className={TENDENCIA_BADGE[e.tendencia]}>{TENDENCIA_LABEL[e.tendencia]}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="card overflow-x-auto">

@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Wand2, Trash2, Plus, Save, CheckCircle2, AlertTriangle } from 'lucide-react';
-import db from '../db.js';
+import { supabase, TABLES } from '../db.js';
 import Badge from '../components/Badge.jsx';
 import { parseWhatsAppMessage } from '../lib/parser.js';
 import { calcularDiasParaVencer, calcularStatusValidade } from '../lib/status.js';
 import { todayISO } from '../lib/format.js';
+import { REDES, REDE_PADRAO } from '../lib/redes.js';
 
 const EXEMPLO_MENSAGEM = `Alere
 Loja: 46
@@ -24,6 +25,7 @@ Tomate
 export default function NovoLancamento() {
   const [mensagem, setMensagem] = useState('');
   const [dataVisita, setDataVisita] = useState(todayISO());
+  const [rede, setRede] = useState(REDE_PADRAO);
   const [empresa, setEmpresa] = useState('');
   const [loja, setLoja] = useState('');
   const [itens, setItens] = useState([]);
@@ -72,6 +74,7 @@ export default function NovoLancamento() {
     const registros = itens.map((it) => ({
       origem: 'LOJA',
       empresa: empresa.trim() || 'Alere',
+      rede,
       loja: loja.trim(),
       produto: it.produto.trim(),
       quantidade: Number(it.quantidade) || 0,
@@ -82,7 +85,9 @@ export default function NovoLancamento() {
       criadoEm: new Date().toISOString(),
     }));
 
-    await db.estoqueLoja.bulkAdd(registros);
+    const { error } = await supabase.from(TABLES.LOJA).insert(registros);
+    if (error) return setErro(`Erro ao salvar no Supabase: ${error.message}`);
+
     setSalvo(true);
     setMensagem('');
     setEmpresa('');
@@ -109,6 +114,16 @@ export default function NovoLancamento() {
               value={dataVisita}
               onChange={(e) => setDataVisita(e.target.value)}
             />
+          </div>
+          <div>
+            <label className="label">Rede</label>
+            <select className="input" value={rede} onChange={(e) => setRede(e.target.value)}>
+              {REDES.map((r) => (
+                <option key={r.slug} value={r.nome}>
+                  {r.nome}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 

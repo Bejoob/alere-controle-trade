@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useParams, Navigate } from 'react-router-dom';
 import { Boxes, Store, AlertTriangle, TriangleAlert, FileDown, FileSpreadsheet } from 'lucide-react';
-import db from '../db.js';
+import { TABLES } from '../db.js';
+import { useSupabaseTable } from '../lib/useSupabaseTable.js';
+import { redeBySlug } from '../lib/redes.js';
 import StatCard from '../components/StatCard.jsx';
 import Badge from '../components/Badge.jsx';
 import BarLojas from '../components/charts/BarLojas.jsx';
@@ -27,9 +29,21 @@ const TENDENCIA_BADGE = {
 };
 
 export default function Dashboard() {
-  const registros = useLiveQuery(() => db.estoqueLoja.toArray(), []) ?? [];
+  const { redeSlug } = useParams();
+  const rede = redeBySlug(redeSlug);
+
+  const todosRegistros = useSupabaseTable(TABLES.LOJA);
   const dashboardRef = useRef(null);
   const [lojaSelecionada, setLojaSelecionada] = useState('');
+
+  useEffect(() => {
+    setLojaSelecionada('');
+  }, [redeSlug]);
+
+  const registros = useMemo(
+    () => (rede ? todosRegistros.filter((r) => (r.rede || 'Zona Sul') === rede.nome) : []),
+    [todosRegistros, rede],
+  );
 
   const ranking = useMemo(() => totalPorLoja(registros), [registros]);
   const porProduto = useMemo(() => totalPorProduto(registros), [registros]);
@@ -45,8 +59,8 @@ export default function Dashboard() {
   async function handleExportarPDF() {
     await gerarPDFRelatorio({
       elemento: dashboardRef.current,
-      titulo: 'Dashboard Alere - Controle de Trade',
-      nomeArquivo: `dashboard-alere-${Date.now()}.pdf`,
+      titulo: `Dashboard Alere - ${rede.nome}`,
+      nomeArquivo: `dashboard-${rede.slug}-${Date.now()}.pdf`,
       tabelas: [
         {
           titulo: 'Ranking de lojas (estoque atual)',
@@ -72,16 +86,18 @@ export default function Dashboard() {
         diasParaVencer: a.diasParaVencerHoje,
         status: a.statusHoje,
       })),
-      `alertas-vencimento-${Date.now()}.csv`,
+      `alertas-vencimento-${rede.slug}-${Date.now()}.csv`,
     );
   }
+
+  if (!rede) return <Navigate to="/rede/zona-sul" replace />;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-800">Dashboard</h1>
-          <p className="text-sm text-slate-400">Visão geral do estoque em loja</p>
+          <h1 className="text-xl font-semibold text-slate-800">Dashboard — {rede.nome}</h1>
+          <p className="text-sm text-slate-400">Visão geral do estoque em loja da rede {rede.nome}</p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleExportarCSV} className="btn-secondary">

@@ -1,8 +1,10 @@
 import { NavLink } from 'react-router-dom';
 import { LayoutDashboard, MessageSquarePlus, Store, Truck, Settings, X, Leaf } from 'lucide-react';
+import { REDES } from '../lib/redes.js';
+
+const DASHBOARD_ITEMS = REDES.map((r) => ({ to: `/rede/${r.slug}`, label: r.nome }));
 
 const NAV_ITEMS = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/novo-lancamento', label: 'Novo Lançamento', icon: MessageSquarePlus },
   { to: '/lojas', label: 'Lojas', icon: Store },
   { to: '/cd', label: 'Centro de Distribuição', icon: Truck },
@@ -32,7 +34,26 @@ export default function Sidebar({ open, onClose }) {
             <X size={20} />
           </button>
         </div>
-        <nav className="flex-1 space-y-1 px-3 py-4">
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+          <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Dashboards</p>
+          {DASHBOARD_ITEMS.map(({ to, label }) => (
+            <NavLink
+              key={to}
+              to={to}
+              onClick={onClose}
+              className={({ isActive }) =>
+                `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+                  isActive ? 'bg-brand-50 text-brand-700' : 'text-slate-600 hover:bg-slate-50'
+                }`
+              }
+            >
+              <LayoutDashboard size={18} />
+              {label}
+            </NavLink>
+          ))}
+
+          <div className="my-2 border-t border-slate-100" />
+
           {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
@@ -51,7 +72,7 @@ export default function Sidebar({ open, onClose }) {
           ))}
         </nav>
         <div className="border-t border-slate-100 px-5 py-4 text-xs text-slate-400">
-          Dados salvos apenas neste navegador.
+          Dados sincronizados na nuvem (Supabase).
         </div>
       </aside>
     </>

@@ -1,25 +1,28 @@
 import { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { FileDown, FileSpreadsheet, Pencil, Trash2, Check, X } from 'lucide-react';
-import db from '../db.js';
+import { supabase, TABLES } from '../db.js';
+import { useSupabaseTable } from '../lib/useSupabaseTable.js';
 import Badge from '../components/Badge.jsx';
 import { STATUS, calcularDiasParaVencer, calcularStatusValidade } from '../lib/status.js';
 import { formatDateBR } from '../lib/format.js';
 import { exportarCSV } from '../lib/csv.js';
 import { gerarPDFRelatorio } from '../lib/pdf.js';
+import { REDES } from '../lib/redes.js';
 
-const FILTRO_VAZIO = { loja: '', produto: '', status: '', dataInicio: '', dataFim: '' };
+const FILTRO_VAZIO = { rede: '', loja: '', produto: '', status: '', dataInicio: '', dataFim: '' };
 
 export default function Lojas() {
-  const registros = useLiveQuery(() => db.estoqueLoja.toArray(), []) ?? [];
+  const registros = useSupabaseTable(TABLES.LOJA);
   const [filtro, setFiltro] = useState(FILTRO_VAZIO);
   const [edicao, setEdicao] = useState(null);
+  const [erro, setErro] = useState('');
 
   const lojas = useMemo(() => [...new Set(registros.map((r) => r.loja))].sort(), [registros]);
   const produtos = useMemo(() => [...new Set(registros.map((r) => r.produto))].sort(), [registros]);
 
   const filtrados = useMemo(() => {
     return registros
+      .filter((r) => !filtro.rede || (r.rede || 'Zona Sul') === filtro.rede)
       .filter((r) => !filtro.loja || r.loja === filtro.loja)
       .filter((r) => !filtro.produto || r.produto === filtro.produto)
       .filter((r) => !filtro.status || r.statusValidade === filtro.status)
@@ -38,28 +41,37 @@ export default function Lojas() {
     setEdicao((e) => ({ ...e, [campo]: valor }));
   }
   async function salvarEdicao() {
+    setErro('');
     const diasParaVencer = calcularDiasParaVencer(edicao.validade, edicao.dataVisita);
     const statusValidade = calcularStatusValidade(edicao.validade, edicao.dataVisita);
-    await db.estoqueLoja.update(edicao.id, {
-      empresa: edicao.empresa,
-      loja: edicao.loja,
-      produto: edicao.produto,
-      quantidade: Number(edicao.quantidade) || 0,
-      validade: edicao.validade || null,
-      dataVisita: edicao.dataVisita,
-      diasParaVencer,
-      statusValidade,
-    });
+    const { error } = await supabase
+      .from(TABLES.LOJA)
+      .update({
+        empresa: edicao.empresa,
+        rede: edicao.rede,
+        loja: edicao.loja,
+        produto: edicao.produto,
+        quantidade: Number(edicao.quantidade) || 0,
+        validade: edicao.validade || null,
+        dataVisita: edicao.dataVisita,
+        diasParaVencer,
+        statusValidade,
+      })
+      .eq('id', edicao.id);
+    if (error) return setErro(`Erro ao salvar: ${error.message}`);
     setEdicao(null);
   }
   async function excluir(id) {
     if (!window.confirm('Excluir este lançamento?')) return;
-    await db.estoqueLoja.delete(id);
+    setErro('');
+    const { error } = await supabase.from(TABLES.LOJA).delete().eq('id', id);
+    if (error) setErro(`Erro ao excluir: ${error.message}`);
   }
 
   function handleExportarCSV() {
     exportarCSV(
       filtrados.map((r) => ({
+        rede: r.rede || 'Zona Sul',
         empresa: r.empresa,
         loja: r.loja,
         produto: r.produto,
@@ -79,8 +91,9 @@ export default function Lojas() {
       tabelas: [
         {
           titulo: 'Lançamentos de estoque em loja',
-          colunas: ['Loja', 'Produto', 'Qtd', 'Validade', 'Visita', 'Status'],
+          colunas: ['Rede', 'Loja', 'Produto', 'Qtd', 'Validade', 'Visita', 'Status'],
           linhas: filtrados.map((r) => [
+            r.rede || 'Zona Sul',
             `Loja ${r.loja}`,
             r.produto,
             r.quantidade,
@@ -110,7 +123,20 @@ export default function Lojas() {
         </div>
       </div>
 
-      <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {erro && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{erro}</div>}
+
+      <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        <div>
+          <label className="label">Rede</label>
+          <select className="input" value={filtro.rede} onChange={(e) => setFiltro((f) => ({ ...f, rede: e.target.value }))}>
+            <option value="">Todas</option>
+            {REDES.map((r) => (
+              <option key={r.slug} value={r.nome}>
+                {r.nome}
+              </option>
+            ))}
+          </select>
+        </div>
         <div>
           <label className="label">Loja</label>
           <select className="input" value={filtro.loja} onChange={(e) => setFiltro((f) => ({ ...f, loja: e.target.value }))}>
@@ -153,17 +179,18 @@ export default function Lojas() {
           <input type="date" className="input" value={filtro.dataFim} onChange={(e) => setFiltro((f) => ({ ...f, dataFim: e.target.value }))} />
         </div>
       </div>
-      {(filtro.loja || filtro.produto || filtro.status || filtro.dataInicio || filtro.dataFim) && (
+      {(filtro.rede || filtro.loja || filtro.produto || filtro.status || filtro.dataInicio || filtro.dataFim) && (
         <button className="text-xs font-medium text-brand-700 hover:underline" onClick={() => setFiltro(FILTRO_VAZIO)}>
           Limpar filtros
         </button>
       )}
 
       <div className="card overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left text-sm">
+        <table className="w-full min-w-[860px] text-left text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-xs text-slate-400">
               <th className="py-2 pr-3">Visita</th>
+              <th className="py-2 pr-3">Rede</th>
               <th className="py-2 pr-3">Loja</th>
               <th className="py-2 pr-3">Produto</th>
               <th className="py-2 pr-3">Quantidade</th>
@@ -175,7 +202,7 @@ export default function Lojas() {
           <tbody>
             {filtrados.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-6 text-center text-slate-400">
+                <td colSpan={8} className="py-6 text-center text-slate-400">
                   Nenhum lançamento encontrado.
                 </td>
               </tr>
@@ -189,6 +216,19 @@ export default function Lojas() {
                       <input type="date" className="input" value={edicao.dataVisita} onChange={(e) => atualizarCampoEdicao('dataVisita', e.target.value)} />
                     ) : (
                       formatDateBR(r.dataVisita)
+                    )}
+                  </td>
+                  <td className="py-2 pr-3">
+                    {editando ? (
+                      <select className="input" value={edicao.rede || 'Zona Sul'} onChange={(e) => atualizarCampoEdicao('rede', e.target.value)}>
+                        {REDES.map((rd) => (
+                          <option key={rd.slug} value={rd.nome}>
+                            {rd.nome}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      r.rede || 'Zona Sul'
                     )}
                   </td>
                   <td className="py-2 pr-3">
